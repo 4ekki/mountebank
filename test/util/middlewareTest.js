@@ -3,9 +3,10 @@
 const middleware = require('../../src/util/middleware'),
     assert = require('assert'),
     mock = require('../mock').mock,
-    FakeResponse = require('../fakes/fakeResponse');
+    FakeResponse = require('../fakes/fakeResponse'),
+    promiseIt = require('../testHelpers').promiseIt;
 
-describe('middleware', () => {
+describe('middleware', function () {
     let request, response, next;
 
     beforeEach(() => {
@@ -14,7 +15,7 @@ describe('middleware', () => {
         next = mock();
     });
 
-    describe('#useAbsoluteUrls', () => {
+    describe('#useAbsoluteUrls', function () {
         let send, setHeader;
 
         beforeEach(() => {
@@ -24,7 +25,7 @@ describe('middleware', () => {
             response.setHeader = setHeader;
         });
 
-        it('should not change header if not location header', () => {
+        it('should not change header if not location header', function () {
             const middlewareFn = middleware.useAbsoluteUrls(9000);
 
             middlewareFn(request, response, next);
@@ -33,7 +34,7 @@ describe('middleware', () => {
             assert.ok(setHeader.wasCalledWith('name', 'value'));
         });
 
-        it('should default location header to localhost with given port if no host header', () => {
+        it('should default location header to localhost with given port if no host header', function () {
             request.headers.host = '';
             const middlewareFn = middleware.useAbsoluteUrls(9000);
 
@@ -43,7 +44,7 @@ describe('middleware', () => {
             assert.ok(setHeader.wasCalledWith('location', 'http://localhost:9000/'));
         });
 
-        it('should match location header regardless of case', () => {
+        it('should match location header regardless of case', function () {
             request.headers.host = '';
             const middlewareFn = middleware.useAbsoluteUrls(9000);
 
@@ -53,7 +54,7 @@ describe('middleware', () => {
             assert.ok(setHeader.wasCalledWith('LOCATION', 'http://localhost:9000/'));
         });
 
-        it('should use the host header if present', () => {
+        it('should use the host header if present', function () {
             request.headers.host = 'mountebank.com';
             const middlewareFn = middleware.useAbsoluteUrls(9000);
 
@@ -63,7 +64,7 @@ describe('middleware', () => {
             assert.ok(setHeader.wasCalledWith('location', 'http://mountebank.com/'));
         });
 
-        it('should do nothing if no response body links are present', () => {
+        it('should do nothing if no response body links are present', function () {
             const middlewareFn = middleware.useAbsoluteUrls(9000);
 
             middlewareFn(request, response, next);
@@ -72,7 +73,7 @@ describe('middleware', () => {
             assert.ok(send.wasCalledWith({ key: 'value' }));
         });
 
-        it('should change response body links', () => {
+        it('should change response body links', function () {
             const middlewareFn = middleware.useAbsoluteUrls(9000);
 
             middlewareFn(request, response, next);
@@ -81,7 +82,7 @@ describe('middleware', () => {
             assert.ok(send.wasCalledWith({ key: 'value', _links: { rel: { href: 'http://localhost:9000/' } } }));
         });
 
-        it('should change response nested body links', () => {
+        it('should change response nested body links', function () {
             const middlewareFn = middleware.useAbsoluteUrls(9000);
 
             middlewareFn(request, response, next);
@@ -90,7 +91,7 @@ describe('middleware', () => {
             assert.ok(send.wasCalledWith({ key: { _links: { rel: { href: 'http://localhost:9000/' } } } }));
         });
 
-        it('should ignore null and undefined values', () => {
+        it('should ignore null and undefined values', function () {
             const middlewareFn = middleware.useAbsoluteUrls(9000);
 
             middlewareFn(request, response, next);
@@ -99,7 +100,7 @@ describe('middleware', () => {
             assert.ok(send.wasCalledWith({ first: null }));
         });
 
-        it('should not change html responses', () => {
+        it('should not change html responses', function () {
             const middlewareFn = middleware.useAbsoluteUrls(9000);
 
             middlewareFn(request, response, next);
@@ -107,31 +108,97 @@ describe('middleware', () => {
 
             assert.ok(send.wasCalledWith('<html _links="/"></html>'));
         });
-    });
 
-    describe('#validateImposterExists', () => {
-        it('should return 404 if imposter does not exist', () => {
-            const middlewareFn = middleware.createImposterValidator({});
-            request.params.id = 1;
-
-            middlewareFn(request, response, next);
-
-            assert.strictEqual(response.statusCode, 404);
-        });
-
-        it('should call next if imposter exists', () => {
-            const imposters = { 1: {} },
-                middlewareFn = middleware.createImposterValidator(imposters);
-            request.params.id = 1;
+        it('should not change links within stub responses', function () {
+            const middlewareFn = middleware.useAbsoluteUrls(9000),
+                userRequest = ({
+                    stubs: [{
+                        responses: [{
+                            is: {
+                                body: {
+                                    _links: { self: { href: '/path/to' } }
+                                }
+                            }
+                        }]
+                    }]
+                });
 
             middlewareFn(request, response, next);
+            response.send(userRequest);
 
-            assert(next.wasCalled());
+            assert.ok(send.wasCalledWith(userRequest));
+        });
+
+        it('should change links within stub _links', function () {
+            const middlewareFn = middleware.useAbsoluteUrls(9000),
+                userRequest = ({ stubs: [{ _links: { self: { href: '/path/to' } } }] });
+
+            middlewareFn(request, response, next);
+            response.send(userRequest);
+
+            assert.ok(send.wasCalledWith({ stubs: [{ _links: { self: { href: 'http://localhost:9000/path/to' } } }] }));
+        });
+
+        it('should change links within stub _links with root imposters array', function () {
+            const middlewareFn = middleware.useAbsoluteUrls(9000),
+                userRequest = ({
+                    imposters: [{
+                        stubs: [{ _links: { self: { href: '/path/to' } } }]
+                    }]
+                });
+
+            middlewareFn(request, response, next);
+            response.send(userRequest);
+
+            assert.ok(send.wasCalledWith({
+                imposters: [{
+                    stubs: [{ _links: { self: { href: 'http://localhost:9000/path/to' } } }]
+                }]
+            }));
+        });
+
+        it('should not change links within response elements sent back to protocol implementations', function () {
+            const middlewareFn = middleware.useAbsoluteUrls(9000),
+                userRequest = {
+                    response: {
+                        statusCode: 200,
+                        body: { _links: { self: { href: '/path/to' } } }
+                    }
+                };
+
+            middlewareFn(request, response, next);
+            response.send(userRequest);
+
+            assert.ok(send.wasCalledWith(userRequest));
         });
     });
 
-    describe('#logger', () => {
-        it('should log request at info level', () => {
+    describe('#validateImposterExists', function () {
+        const Q = require('q');
+
+        promiseIt('should return 404 if imposter does not exist', function () {
+            const repo = { exists: mock().returns(Q(false)) },
+                middlewareFn = middleware.createImposterValidator(repo);
+            request.params.id = 1;
+
+            return middlewareFn(request, response, next).then(() => {
+                assert.strictEqual(response.statusCode, 404);
+            });
+        });
+
+        promiseIt('should call next if imposter exists', function () {
+            const repo = { exists: mock().returns(Q(true)) },
+                middlewareFn = middleware.createImposterValidator(repo);
+            request.params.id = 1;
+
+            return middlewareFn(request, response, next).then(() => {
+                assert(next.wasCalled());
+            });
+        });
+    });
+
+    describe('#logger', function () {
+        it('should log request at info level', function () {
             const log = { info: mock() },
                 middlewareFn = middleware.logger(log, 'TEST MESSAGE');
             request = { url: '', headers: { accept: '' } };
@@ -141,7 +208,17 @@ describe('middleware', () => {
             assert(log.info.wasCalledWith('TEST MESSAGE'));
         });
 
-        it('should log request url and method', () => {
+        it('should log protocol implementation requests at debug level', function () {
+            const log = { debug: mock() },
+                middlewareFn = middleware.logger(log, 'TEST MESSAGE');
+            request = { url: '/_requests/0', headers: { accept: '' } };
+
+            middlewareFn(request, {}, next);
+
+            assert(log.debug.wasCalledWith('TEST MESSAGE'));
+        });
+
+        it('should log request url and method', function () {
             const log = { info: mock() },
                 middlewareFn = middleware.logger(log, 'MESSAGE WITH :method :url');
             request = { method: 'METHOD', url: 'URL', headers: { accept: '' } };
@@ -151,7 +228,7 @@ describe('middleware', () => {
             assert(log.info.wasCalledWith('MESSAGE WITH METHOD URL'));
         });
 
-        it('should not log static asset requests', () => {
+        it('should not log static asset requests', function () {
             const log = { info: mock() },
                 middlewareFn = middleware.logger(log, 'TEST');
 
@@ -162,7 +239,7 @@ describe('middleware', () => {
             });
         });
 
-        it('should not log html requests', () => {
+        it('should not log html requests', function () {
             const log = { info: mock() },
                 middlewareFn = middleware.logger(log, 'TEST');
             request = { method: 'METHOD', url: 'URL', headers: { accept: 'text/html' } };
@@ -172,7 +249,7 @@ describe('middleware', () => {
             assert(!log.info.wasCalled());
         });
 
-        it('should not log AJAX requests', () => {
+        it('should not log AJAX requests', function () {
             const log = { info: mock() },
                 middlewareFn = middleware.logger(log, 'TEST');
             request = { method: 'METHOD', url: 'URL', headers: { 'x-requested-with': 'XMLHttpRequest' } };
@@ -182,7 +259,7 @@ describe('middleware', () => {
             assert(!log.info.wasCalled());
         });
 
-        it('should call next', () => {
+        it('should call next', function () {
             const log = { info: mock() },
                 middlewareFn = middleware.logger(log, 'TEST');
             request = { url: '', headers: { accept: '' } };
@@ -193,8 +270,8 @@ describe('middleware', () => {
         });
     });
 
-    describe('#globals', () => {
-        it('should pass variables to all render calls', () => {
+    describe('#globals', function () {
+        it('should pass variables to all render calls', function () {
             const render = mock(),
                 middlewareFn = middleware.globals({ first: 1, second: 2 });
             response = { render: render };
@@ -205,7 +282,7 @@ describe('middleware', () => {
             assert(render.wasCalledWith('view', { first: 1, second: 2 }));
         });
 
-        it('should merge variables to all render calls', () => {
+        it('should merge variables to all render calls', function () {
             const render = mock(),
                 middlewareFn = middleware.globals({ first: 1, second: 2 });
             response = { render: render };
@@ -216,7 +293,7 @@ describe('middleware', () => {
             assert(render.wasCalledWith('view', { third: 3, first: 1, second: 2 }));
         });
 
-        it('should overwrite variables of the same name', () => {
+        it('should overwrite variables of the same name', function () {
             const render = mock(),
                 middlewareFn = middleware.globals({ key: 'global' });
             response = { render: render };
@@ -228,8 +305,8 @@ describe('middleware', () => {
         });
     });
 
-    describe('#defaultIEtoHTML', () => {
-        it('should not change accept header for non-IE user agents', () => {
+    describe('#defaultIEtoHTML', function () {
+        it('should not change accept header for non-IE user agents', function () {
             request.headers['user-agent'] = 'blah Chrome blah';
             request.headers.accept = 'original accept';
 
@@ -238,7 +315,7 @@ describe('middleware', () => {
             assert.strictEqual(request.headers.accept, 'original accept');
         });
 
-        it('should change accept header for IE user agents', () => {
+        it('should change accept header for IE user agents', function () {
             request.headers['user-agent'] = 'blah MSIE blah';
             request.headers.accept = '*/*';
 
@@ -247,7 +324,7 @@ describe('middleware', () => {
             assert.strictEqual(request.headers.accept, 'text/html');
         });
 
-        it('should not change accept header for IE user agents if application/json explicitly included', () => {
+        it('should not change accept header for IE user agents if application/json explicitly included', function () {
             request.headers['user-agent'] = 'blah MSIE blah';
             request.headers.accept = 'accept/any, application/json';
 

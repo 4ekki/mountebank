@@ -4,9 +4,33 @@
 // Many times I'd forget to add the errback, making
 // tests harder to fix when they failed because I'd
 // miss the assertion message.
-const wrap = (test, that) => done => test.apply(that, []).done(() => { done(); }, done);
-const promiseIt = (what, test) => it(what, wrap(test, { name: what }));
+function wrap (test, that) {
+    return done => test.apply(that, []).done(() => { done(); }, done);
+}
+
+function promiseIt (what, test) {
+    return it(what, wrap(test, { name: what }));
+}
 
 promiseIt.only = (what, test) => it.only(what, wrap(test, { name: what }));
 
-module.exports = { promiseIt };
+function xpromiseIt () {}
+xpromiseIt.only = () => {};
+
+function isOutOfProcessImposter (protocol) {
+    const fs = require('fs');
+
+    if (fs.existsSync('protocols.json')) {
+        const protocols = require(process.cwd() + '/protocols.json');
+        return Object.keys(protocols).indexOf(protocol) >= 0;
+    }
+    else {
+        return false;
+    }
+}
+
+function isInProcessImposter (protocol) {
+    return !isOutOfProcessImposter(protocol);
+}
+
+module.exports = { xpromiseIt, promiseIt, isOutOfProcessImposter, isInProcessImposter };

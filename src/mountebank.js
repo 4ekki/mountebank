@@ -6,7 +6,7 @@
  * @module
  */
 
-const initializeLogfile = filename => {
+function initializeLogfile (filename) {
     // Ensure new logfile on startup so the /logs only shows for this process
     const path = require('path'),
         fs = require('fs'),
@@ -17,28 +17,10 @@ const initializeLogfile = filename => {
     if (fs.existsSync(filename)) {
         fs.renameSync(filename, newFilename);
     }
-};
+}
 
-/**
- * Creates the mountebank server
- * @param {object} options - The command line options
- * @returns {Object} An object with a close method to stop the server
- */
-const create = options => {
-    const Q = require('q'),
-        express = require('express'),
-        cors = require('cors'),
-        errorHandler = require('errorhandler'),
-        path = require('path'),
-        middleware = require('./util/middleware'),
-        HomeController = require('./controllers/homeController'),
-        ImpostersController = require('./controllers/impostersController'),
-        ImposterController = require('./controllers/imposterController'),
-        LogsController = require('./controllers/logsController'),
-        ConfigController = require('./controllers/configController'),
-        FeedController = require('./controllers/feedController'),
-        Imposter = require('./models/imposter'),
-        winston = require('winston'),
+function createLogger (options) {
+    const winston = require('winston'),
         format = winston.format,
         consoleFormat = format.printf(info => `${info.level}: ${info.message}`),
         winstonLogger = winston.createLogger({
@@ -47,31 +29,8 @@ const create = options => {
                 format: format.combine(format.colorize(), consoleFormat)
             })]
         }),
-        thisPackage = require('../package.json'),
-        releases = require('../releases.json'),
         ScopedLogger = require('./util/scopedLogger'),
-        util = require('util'),
-        helpers = require('./util/helpers'),
-        deferred = Q.defer(),
-        app = express(),
-        imposters = options.imposters || {},
-        protocols = {
-            tcp: require('./models/tcp/tcpServer').initialize(winstonLogger, options.allowInjection, options.mock, options.debug),
-            http: require('./models/http/httpServer').initialize(winstonLogger, options.allowInjection, options.mock, options.debug),
-            https: require('./models/https/httpsServer').initialize(winstonLogger, options.allowInjection, options.mock, options.debug),
-            smtp: require('./models/smtp/smtpServer').initialize(winstonLogger, options.mock, options.debug),
-            foo: require('./models/foo/fooServer').initialize(winstonLogger, options.allowInjection, options.mock, options.debug)
-        },
-        logger = ScopedLogger.create(winstonLogger, util.format('[mb:%s] ', options.port)),
-        homeController = HomeController.create(releases),
-        impostersController = ImpostersController.create(protocols, imposters, Imposter, logger),
-        imposterController = ImposterController.create(imposters),
-        logsController = LogsController.create(options.logfile),
-        configController = ConfigController.create(thisPackage.version, options),
-        feedController = FeedController.create(releases, options),
-        validateImposterExists = middleware.createImposterValidator(imposters),
-        localIPs = ['::ffff:127.0.0.1', '::1', '127.0.0.1'],
-        allowedIPs = localIPs.concat(options.ipWhitelist);
+        logger = ScopedLogger.create(winstonLogger, `[mb:${options.port}] `);
 
     if (!options.nologfile) {
         initializeLogfile(options.logfile);
@@ -82,6 +41,177 @@ const create = options => {
             tailable: true,
             format: format.combine(format.timestamp(), format.json())
         }));
+    }
+
+    return logger;
+}
+
+function getLocalIPs () {
+    const os = require('os'),
+        interfaces = os.networkInterfaces(),
+        result = [];
+
+    Object.keys(interfaces).forEach(name => {
+        interfaces[name].forEach(ip => {
+            if (ip.internal) {
+                result.push(ip.address);
+                if (ip.family === 'IPv4') {
+                    // Prefix for IPv4 address mapped to a compliant IPv6 scheme
+                    result.push(`::ffff:${ip.address}`);
+                }
+            }
+        });
+    });
+    return result;
+}
+
+function ipWithoutZoneId (ip) {
+    return ip.replace(/%\w+/, '').toLowerCase();
+}
+
+function createIPVerification (options) {
+    const allowedIPs = getLocalIPs();
+
+    if (!options.localOnly) {
+        options.ipWhitelist.forEach(ip => { allowedIPs.push(ip.toLowerCase()); });
+    }
+
+    if (allowedIPs.indexOf('*') >= 0) {
+        return () => true;
+    }
+    else {
+        return (ip, logger) => {
+            if (typeof ip === 'undefined') {
+                logger.error('Blocking request because no IP address provided. This is likely a bug in the protocol implementation.');
+                return false;
+            }
+            else {
+                const allowed = allowedIPs.some(allowedIP => allowedIP === ipWithoutZoneId(ip));
+                if (!allowed) {
+                    logger.warn(`Blocking incoming connection from ${ip}. Turn off --localOnly or add to --ipWhitelist to allow`);
+                }
+                return allowed;
+            }
+        };
+    }
+}
+
+function isBuiltInProtocol (protocol) {
+    return ['tcp', 'smtp', 'http', 'https'].indexOf(protocol) >= 0;
+}
+
+function loadCustomProtocols (protofile, logger) {
+    if (typeof protofile === 'undefined') {
+        return {};
+    }
+
+    const fs = require('fs'),
+        path = require('path'),
+        filename = path.resolve(path.relative(process.cwd(), protofile));
+
+    if (fs.existsSync(filename)) {
+        try {
+            const customProtocols = require(filename);
+            Object.keys(customProtocols).forEach(proto => {
+                if (isBuiltInProtocol(proto)) {
+                    logger.warn(`Using custom ${proto} implementation instead of the built-in one`);
+                }
+                else {
+                    logger.info(`Loaded custom protocol ${proto}`);
+                }
+            });
+            return customProtocols;
+        }
+        catch (e) {
+            logger.error(`${protofile} contains invalid JSON -- no custom protocols loaded`);
+            return {};
+        }
+    }
+    else {
+        return {};
+    }
+}
+
+function loadProtocols (options, baseURL, logger, isAllowedConnection, imposters) {
+    const builtInProtocols = {
+            tcp: require('./models/tcp/tcpServer'),
+            http: require('./models/http/httpServer'),
+            https: require('./models/https/httpsServer'),
+            smtp: require('./models/smtp/smtpServer')
+        },
+        customProtocols = loadCustomProtocols(options.protofile, logger),
+        config = {
+            callbackURLTemplate: `${baseURL}/imposters/:port/_requests`,
+            recordRequests: options.mock,
+            recordMatches: options.debug,
+            loglevel: options.loglevel,
+            allowInjection: options.allowInjection,
+            host: options.host
+        };
+
+    return require('./models/protocols').load(builtInProtocols, customProtocols, config, isAllowedConnection, logger, imposters);
+}
+
+/**
+ * Creates the mountebank server
+ * @param {object} options - The command line options
+ * @returns {Object} An object with a close method to stop the server
+ */
+function create (options) {
+    const Q = require('q'),
+        express = require('express'),
+        cors = require('cors'),
+        errorHandler = require('errorhandler'),
+        path = require('path'),
+        middleware = require('./util/middleware'),
+        thisPackage = require('../package.json'),
+        releases = require('../releases.json'),
+        helpers = require('./util/helpers'),
+        app = express(),
+        hostname = options.host || 'localhost',
+        baseURL = `http://${hostname}:${options.port}`,
+        logger = createLogger(options),
+        isAllowedConnection = createIPVerification(options),
+        imposters = require('./models/impostersRepository').create(options, logger),
+        protocols = loadProtocols(options, baseURL, logger, isAllowedConnection, imposters),
+        homeController = require('./controllers/homeController').create(releases),
+        impostersController = require('./controllers/impostersController').create(
+            protocols, imposters, logger, options.allowInjection),
+        imposterController = require('./controllers/imposterController').create(
+            protocols, imposters, logger, options.allowInjection),
+        logsController = require('./controllers/logsController').create(options.logfile),
+        configController = require('./controllers/configController').create(thisPackage.version, options),
+        feedController = require('./controllers/feedController').create(releases, options),
+        validateImposterExists = middleware.createImposterValidator(imposters),
+        fs = require('fs');
+
+    function loadAllImpostersFromDatabase () {
+        if (!options.datadir || !fs.existsSync(options.datadir)) {
+            return Q();
+        }
+
+        const dirs = fs.readdirSync(options.datadir),
+            promises = dirs.map(dir => {
+                const imposterFilename = `${options.datadir}/${dir}/imposter.json`;
+                if (!fs.existsSync(imposterFilename)) {
+                    logger.warn(`Skipping ${dir} during loading; missing imposter.json`);
+                    return Q();
+                }
+
+                const config = JSON.parse(fs.readFileSync(imposterFilename)),
+                    protocol = protocols[config.protocol];
+
+                if (protocol) {
+                    logger.info(`Loading ${config.protocol}:${dir} from datadir`);
+                    return protocol.createImposterFrom(config)
+                        .then(imposter => imposters.addReference(imposter));
+                }
+                else {
+                    logger.error(`Cannot load imposter ${dir}; no protocol loaded for ${config.protocol}`);
+                    return Q();
+                }
+            });
+        return Q.all(promises);
     }
 
     app.use(middleware.useAbsoluteUrls(options.port));
@@ -107,8 +237,21 @@ const create = options => {
     app.put('/imposters', impostersController.put);
     app.get('/imposters/:id', validateImposterExists, imposterController.get);
     app.delete('/imposters/:id', imposterController.del);
-    app.delete('/imposters/:id/savedProxyResponses', imposterController.resetProxies);
-    app.delete('/imposters/:id/requests', imposterController.resetProxies); // deprecated but saved for backwards compatibility
+    app.delete('/imposters/:id/savedProxyResponses', validateImposterExists, imposterController.resetProxies);
+    app.delete('/imposters/:id/savedRequests', validateImposterExists, imposterController.resetRequests);
+
+    // deprecated but saved for backwards compatibility
+    app.delete('/imposters/:id/requests', validateImposterExists, imposterController.resetProxies);
+
+    // Changing stubs without restarting imposter
+    app.put('/imposters/:id/stubs', validateImposterExists, imposterController.putStubs);
+    app.put('/imposters/:id/stubs/:stubIndex', validateImposterExists, imposterController.putStub);
+    app.post('/imposters/:id/stubs', validateImposterExists, imposterController.postStub);
+    app.delete('/imposters/:id/stubs/:stubIndex', validateImposterExists, imposterController.deleteStub);
+
+    // Protocol implementation APIs
+    app.post('/imposters/:id/_requests', validateImposterExists, imposterController.postRequest);
+    app.post('/imposters/:id/_requests/:proxyResolutionKey', validateImposterExists, imposterController.postProxyResponse);
 
     app.get('/logs', logsController.get);
     app.get('/config', configController.get);
@@ -125,7 +268,6 @@ const create = options => {
         '/support',
         '/license',
         '/faqs',
-        '/thoughtworks',
         '/docs/gettingStarted',
         '/docs/install',
         '/docs/mentalModel',
@@ -147,79 +289,71 @@ const create = options => {
         '/docs/protocols/http',
         '/docs/protocols/https',
         '/docs/protocols/tcp',
-        '/docs/protocols/smtp'
+        '/docs/protocols/smtp',
+        '/docs/protocols/custom'
     ].forEach(endpoint => {
         app.get(endpoint, (request, response) => {
             response.render(endpoint.substring(1));
         });
     });
 
-    const isAllowedConnection = ipAddress => allowedIPs.some(allowedIP => allowedIP === '*' || allowedIP.toLowerCase() === ipAddress.toLowerCase());
+    process.once('exit', () => {
+        imposters.stopAllSync();
+    });
 
-    const hostname = () => {
-        if (options.localOnly) {
-            return 'localhost';
-        }
-        else if (options.host) {
-            return options.host;
-        }
-        else {
-            return undefined;
-        }
-    };
+    if (options.allowInjection) {
+        logger.warn(`Running with --allowInjection set. See ${baseURL}/docs/security for security info`);
+    }
 
-    const connections = {},
-        server = app.listen(options.port, hostname(), () => {
-            logger.info('mountebank v%s now taking orders - point your browser to http://localhost:%s for help',
-                thisPackage.version, options.port);
-            logger.debug(`config: ${JSON.stringify({
-                options: options,
-                process: {
-                    nodeVersion: process.version,
-                    architecture: process.arch,
-                    platform: process.platform
-                }
-            })}`);
-            if (options.allowInjection) {
-                logger.warn('Running with --allowInjection set. See http://localhost:%s/docs/security for security info',
-                    options.port);
+    return loadAllImpostersFromDatabase().then(() => {
+        const deferred = Q.defer(),
+            connections = {},
+            server = app.listen(options.port, options.host, () => {
+                logger.info(`mountebank v${thisPackage.version} now taking orders - point your browser to ${baseURL}/ for help`);
+                logger.debug(`config: ${JSON.stringify({
+                    options: options,
+                    process: {
+                        nodeVersion: process.version,
+                        architecture: process.arch,
+                        platform: process.platform
+                    }
+                })}`);
+
+                deferred.resolve({
+                    close: callback => {
+                        server.close(() => {
+                            logger.info('Adios - see you soon?');
+                            callback();
+                        });
+
+                        // Force kill any open connections to prevent process hanging
+                        Object.keys(connections).forEach(socket => {
+                            connections[socket].destroy();
+                        });
+                    }
+                });
+            });
+
+        server.on('connection', socket => {
+            const name = helpers.socketName(socket),
+                ipAddress = socket.remoteAddress;
+            connections[name] = socket;
+
+            socket.on('close', () => {
+                delete connections[name];
+            });
+
+            socket.on('error', error => {
+                logger.error('%s transmission error X=> %s', name, JSON.stringify(error));
+            });
+
+            if (!isAllowedConnection(ipAddress, logger)) {
+                socket.destroy();
             }
-
-            server.on('connection', socket => {
-                const name = helpers.socketName(socket);
-                connections[name] = socket;
-
-                socket.on('close', () => {
-                    delete connections[name];
-                });
-
-                socket.on('error', error => {
-                    logger.error('%s transmission error X=> %s', name, JSON.stringify(error));
-                });
-
-                if (!isAllowedConnection(socket.address().address)) {
-                    logger.warn('Blocking incoming connection from %s. Add to --ipWhitelist to allow',
-                        socket.address().address);
-                    socket.end();
-                }
-            });
-
-            deferred.resolve({
-                close: callback => {
-                    server.close(() => {
-                        logger.info('Adios - see you soon?');
-                        callback();
-                    });
-
-                    // Force kill any open connections to prevent process hanging
-                    Object.keys(connections).forEach(socket => {
-                        connections[socket].destroy();
-                    });
-                }
-            });
         });
 
-    return deferred.promise;
-};
+        return deferred.promise;
+    });
+}
 
 module.exports = { create };

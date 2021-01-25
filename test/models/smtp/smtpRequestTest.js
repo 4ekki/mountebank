@@ -4,9 +4,9 @@ const assert = require('assert'),
     SmtpRequest = require('../../../src/models/smtp/smtpRequest'),
     promiseIt = require('../../testHelpers').promiseIt;
 
-describe('smtpRequest', () => {
-    describe('#createFrom', () => {
-        promiseIt('should parse SMTP data', () => {
+describe('smtpRequest', function () {
+    describe('#createFrom', function () {
+        promiseIt('should parse SMTP data', function () {
             let session = {
                     remoteAddress: 'RemoteAddress',
                     envelope: {
@@ -40,6 +40,7 @@ describe('smtpRequest', () => {
                     priority: 'normal',
                     references: [],
                     inReplyTo: [],
+                    ip: 'RemoteAddress',
                     text: 'Body',
                     html: '',
                     attachments: []

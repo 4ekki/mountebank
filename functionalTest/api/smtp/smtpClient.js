@@ -3,14 +3,14 @@
 const Q = require('q');
 const SMTPConnection = require('nodemailer/lib/smtp-connection');
 
-const addressOf = email => {
+function addressOf (email) {
     if (email.indexOf('<') < 0) {
         return email;
     }
     return (/<([^>]+)>/).exec(email)[1];
-};
+}
 
-const messageText = message => {
+function messageText (message) {
     let result = `From: ${message.from}`;
     message.to.forEach(address => { result += `\r\nTo: ${address}`; });
     message.cc.forEach(address => { result += `\r\nCc: ${address}`; });
@@ -18,18 +18,20 @@ const messageText = message => {
     result += `\r\nSubject: ${message.subject}`;
     result += `\r\n\r\n${message.text}`;
     return result;
-};
+}
 
-const send = (message, port) => {
+function send (message, port, host = '127.0.0.1') {
     if (!port) {
         throw Error('you forgot to pass the port again');
     }
 
     let deferred = Q.defer();
-    let connection = new SMTPConnection({ port });
+    let connection = new SMTPConnection({ port, host });
 
     message.cc = message.cc || [];
     message.bcc = message.bcc || [];
+
+    connection.on('error', deferred.reject);
 
     connection.connect(connectionError => {
         if (connectionError) {
@@ -49,7 +51,7 @@ const send = (message, port) => {
     });
 
     return deferred.promise;
-};
+}
 
 module.exports = {
     send: send

@@ -21,7 +21,7 @@ function include (filetype, file) {
 }
 
 function forEachFileIn (dir, fileCallback, options) {
-    fs.readdirSync(dir).forEach(function (file) {
+    fs.readdirSync(dir).forEach(file => {
         const filePath = path.join(dir, file);
 
         if (!exclude(options.exclude, filePath)) {
@@ -37,9 +37,9 @@ function forEachFileIn (dir, fileCallback, options) {
 
 module.exports = function (grunt) {
 
-    grunt.registerTask('jsCheck', 'Run JavaScript checks not covered by eslint', function () {
+    grunt.registerTask('onlyCheck', 'Look for accidental mocha .only calls', function () {
         let errors = [],
-            jsCheck = function (file) {
+            check = function (file) {
                 const contents = fs.readFileSync(file, 'utf8'),
                     lines = contents.split(os.EOL);
 
@@ -51,30 +51,49 @@ module.exports = function (grunt) {
                     }));
                 });
             },
-            exclusions = ['node_modules', 'dist', 'staticAnalysis.js', 'testHelpers.js', '*.pid', 'jquery', 'docs'];
+            exclusions = ['node_modules', 'dist', 'staticAnalysis.js', 'testHelpers.js', '*.pid', 'jquery', 'docs', '*.csv'];
 
-        forEachFileIn('.', jsCheck, { exclude: exclusions, filetype: '.js' });
+        forEachFileIn('.', check, { exclude: exclusions, filetype: '.js' });
 
         if (errors.length > 0) {
             grunt.warn(errors.join(os.EOL));
         }
     });
 
+    grunt.registerTask('objectCheck', 'Look for accidental use of typeof x === "object"', function () {
+        let errors = [],
+            check = function (file) {
+                const contents = fs.readFileSync(file, 'utf8');
+                if (contents.indexOf("=== 'object'") > 0) {
+                    errors.push(`${file} appears to do a typecheck against object without using helpers.isObject`);
+                }
+            },
+            exclusions = ['node_modules', 'dist', 'functionalTest', 'staticAnalysis.js', 'helpers.js', '*.pid', 'jquery', 'docs', '*.csv'];
+
+        forEachFileIn('.', check, { exclude: exclusions, filetype: '.js' });
+
+        if (errors.length > 0) {
+            grunt.warn(errors.join(os.EOL));
+        }
+    });
+
+    grunt.registerTask('jsCheck', 'Run JavaScript checks not covered by eslint', ['onlyCheck', 'objectCheck']);
+
     grunt.registerTask('deadCheck', 'Check for unused dependencies in package.json', function () {
         const thisPackage = require('../package.json'),
             dependencies = Object.keys(thisPackage.dependencies).concat(Object.keys(thisPackage.devDependencies)),
             usedCount = {},
-            dependencyCheck = function (file) {
+            dependencyCheck = file => {
                 const contents = fs.readFileSync(file, 'utf8');
 
-                dependencies.forEach(function (dependency) {
+                dependencies.forEach(dependency => {
                     if (contents.indexOf("require('" + dependency) >= 0 ||
                         contents.indexOf("loadNpmTasks('" + dependency + "')") >= 0) {
                         usedCount[dependency] += 1;
                     }
                 });
             },
-            exclusions = ['node_modules', 'docs', '.git', '.DS_Store', '.idea', 'images', 'dist', 'mountebank.iml', 'mb.log', '*.pid', 'package-lock.json'],
+            exclusions = ['node_modules', 'docs', '.git', '.DS_Store', '.idea', 'images', 'dist', 'mountebank.iml', 'mb.log', '*.pid', 'package-lock.json', '*.csv'],
             errors = [],
             whitelist = [
                 'grunt',
@@ -83,22 +102,17 @@ module.exports = function (grunt) {
                 'grunt-cli',
                 'jsdoc',
                 'grunt-contrib-csslint',
-                'shonkwrap',
-                'codeclimate-test-reporter',
                 'firebase-tools',
-                'nc'
+                'nc',
+                'snyk'
             ];
 
-        dependencies.forEach(function (dependency) {
-            usedCount[dependency] = 0;
-        });
-        whitelist.forEach(function (dependency) {
-            usedCount[dependency] += 1;
-        });
+        dependencies.forEach(dependency => { usedCount[dependency] = 0; });
+        whitelist.forEach(dependency => { usedCount[dependency] += 1; });
 
         forEachFileIn('.', dependencyCheck, { exclude: exclusions });
 
-        dependencies.forEach(function (dependency) {
+        dependencies.forEach(dependency => {
             if (usedCount[dependency] === 0) {
                 errors.push(dependency + ' is depended on in package.json but is never required');
             }
@@ -122,9 +136,9 @@ module.exports = function (grunt) {
         });
     });
 
-    grunt.registerTask('_codeclimate', 'Send coverage results to codeclimate', function () {
+    grunt.registerTask('codeclimate', 'Send coverage results to codeclimate', function () {
         const done = this.async(),
-            command = 'node_modules/.bin/codeclimate-test-reporter < coverage/lcov.info';
+            command = 'scripts/codeclimate';
 
         exec(command, function (error, stdout, stderr) {
             if (stdout) { console.log(stdout); }
@@ -145,6 +159,4 @@ module.exports = function (grunt) {
             done();
         });
     });
-
-    grunt.registerTask('codeclimate', 'Send coverage results to codeclimate', ['coverage', '_codeclimate']);
 };

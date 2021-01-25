@@ -3,7 +3,6 @@
 const port = process.env.MB_PORT || 2525;
 
 module.exports = grunt => {
-
     require('time-grunt')(grunt);
 
     grunt.loadTasks('tasks');
@@ -27,41 +26,13 @@ module.exports = grunt => {
                 },
                 src: ['functionalTest/**/*.js']
             },
-            functionalFoo: {
-                options: { reporter: 'spec' },
-                src: ['functionalTest/api/foo/**/*.js']
-            },
-            functionalHttp: {
-                options: { reporter: 'spec' },
-                src: ['functionalTest/api/http/**/*.js']
-            },
-            functionalHttps: {
-                options: { reporter: 'spec' },
-                src: ['functionalTest/api/https/**/*.js']
-            },
-            functionalSmtp: {
-                options: { reporter: 'spec' },
-                src: ['functionalTest/api/smtp/**/*.js']
-            },
-            functionalTcp: {
-                options: { reporter: 'spec' },
-                src: ['functionalTest/api/tcp/**/*.js']
-            },
-            functionalApi: {
-                options: { reporter: 'spec' },
-                src: ['functionalTest/api/*.js']
-            },
-            functionalCli: {
-                options: { reporter: 'spec' },
-                src: ['functionalTest/commandLine/**/*.js']
-            },
-            functionalHtml: {
-                options: { reporter: 'spec' },
-                src: ['functionalTest/html/**/*.js']
-            },
             performance: {
                 options: { reporter: 'spec' },
                 src: ['performanceTest/**/*.js']
+            },
+            dbPerformance: {
+                options: { reporter: 'spec' },
+                src: ['performanceTest/databaseConcurrencyTest.js']
             }
         },
         eslint: {
@@ -92,7 +63,7 @@ module.exports = grunt => {
                 path: 'bin/mb',
                 pathEnvironmentVariable: 'MB_EXECUTABLE'
             },
-            restart: ['--port', port, '--pidfile', 'mb-grunt.pid', '--logfile', 'mb-grunt.log', '--allowInjection', '--mock', '--debug'],
+            start: ['--port', port, '--pidfile', 'mb-grunt.pid', '--logfile', 'mb-grunt.log', '--allowInjection', '--mock', '--localOnly'],
             stop: ['--pidfile', 'mb-grunt.pid']
         },
         csslint: {
@@ -113,25 +84,41 @@ module.exports = grunt => {
         process.env.MB_AIRPLANE_MODE = 'true';
     });
 
+    grunt.registerTask('inProcessImposters', () => {
+        const fs = require('fs');
+        if (fs.existsSync('protocols.json')) {
+            fs.unlinkSync('protocols.json');
+        }
+    });
+
+    grunt.registerTask('outOfProcessImposters', () => {
+        const protocols = {
+            smtp: { createCommand: 'node src/models/smtp/index.js' },
+            http: { createCommand: 'node src/models/http/index.js' },
+            https: { createCommand: 'node src/models/https/index.js' },
+            tcp: { createCommand: 'node src/models/tcp/index.js' }
+        };
+        require('fs').writeFileSync('protocols.json', JSON.stringify(protocols, null, 2));
+    });
+
+    grunt.registerTask('persistent', () => {
+        grunt.log.writeln('Running tests with --datadir enabled');
+        process.env.MB_PERSISTENT = 'true';
+        const mbConfig = grunt.config.get('mb.start');
+        mbConfig.push('--datadir');
+        mbConfig.push('.mbdb');
+        grunt.config('mb.start', mbConfig);
+    });
+
     grunt.registerTask('test:unit', 'Run the unit tests', ['mochaTest:unit']);
     grunt.registerTask('test:functional', 'Run the functional tests',
-        ['mb:restart', 'try', 'mochaTest:functional', 'finally', 'mb:stop', 'checkForErrors']);
+        ['mb:start', 'try', 'mochaTest:functional', 'finally', 'mb:stop', 'checkForErrors']);
     grunt.registerTask('test:performance', 'Run the performance tests', ['mochaTest:performance']);
+    grunt.registerTask('test:dbPerformance', 'Run the database performance tests', ['mochaTest:dbPerformance']);
     grunt.registerTask('test', 'Run all non-performance tests', ['test:unit', 'test:functional']);
     grunt.registerTask('lint', 'Run all lint checks', ['jsCheck', 'deadCheck', 'eslint']);
-    grunt.registerTask('default', ['test', 'lint']);
+    grunt.registerTask('default', ['lint', 'test']);
     grunt.registerTask('airplane', 'Build that avoids tests requiring network access', ['setAirplaneMode', 'default']);
-
-    // Windows workaround; I have been unable to debug why I get ECONNRESET errors on Windows test runs
-    // of test:functional, so instead I'm cheating by breaking up the test run. With a full test:functional
-    // test run on Windows, I get an ECONNRESET error after around ~580 http/s requests from the functional
-    // tests. It appears to be deterministic, it will be the same test that starts failing as long as you maintain
-    // the order that the tests run in. However, that test works by itself, and will pass if you move it up in
-    // the order of the tests.
-    ['Foo', 'Http', 'Https', 'Smtp', 'Tcp', 'Api', 'Cli', 'Html'].forEach(key => {
-        grunt.registerTask('test:functional' + key,
-            ['mb:restart', 'try', 'mochaTest:functional' + key, 'finally', 'mb:stop', 'checkForErrors']);
-    });
 
     // Package-specific testing
     grunt.registerTask('test:tarball:x64', 'Run tests against packaged tarball',

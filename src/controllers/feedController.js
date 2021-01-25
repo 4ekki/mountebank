@@ -10,7 +10,7 @@
  * @param {Object} options - The command line options used to start mountebank
  * @returns {Object} The controller
  */
-const create = (releases, options) => {
+function create (releases, options) {
     const helpers = require('../util/helpers'),
         feedReleases = helpers.clone(releases);
 
@@ -24,13 +24,18 @@ const create = (releases, options) => {
         return path.join(__dirname, '/../views/', releaseViewFor(version));
     };
 
+    function versionInWhitelist (version) {
+        // Prevent path traversal attack like v2.3.0%2f..%2f..%2f_header
+        return feedReleases.some(release => version.toLowerCase() === release.version);
+    }
+
     /**
      * The function that responds to GET /feed
      * @memberOf module:controllers/feedController#
      * @param {Object} request - The HTTP request
      * @param {Object} response - The HTTP response
      */
-    const getFeed = (request, response) => {
+    function getFeed (request, response) {
         const fs = require('fs'),
             ejs = require('ejs'),
             page = parseInt(request.query.page || '1'),
@@ -45,20 +50,20 @@ const create = (releases, options) => {
             };
 
         // I'd prefer putting this as an include in the view, but EJS doesn't support dynamic includes
-        if (!feedReleases[0].view) {
-            feedReleases.forEach(release => {
+        config.releases.forEach(release => {
+            if (!release.view) {
                 const contents = fs.readFileSync(releaseFilenameFor(release.version), { encoding: 'utf8' });
                 release.view = ejs.render(contents, {
                     host: request.headers.host,
                     releaseMajorMinor: release.version.replace(/^v(\d+\.\d+).*/, '$1'),
                     releaseVersion: release.version.replace('v', '')
                 });
-            });
-        }
+            }
+        });
 
         response.type('application/atom+xml');
         response.render('feed', config);
-    };
+    }
 
     /**
      * The function that responds to GET /releases
@@ -66,9 +71,9 @@ const create = (releases, options) => {
      * @param {Object} request - The HTTP request
      * @param {Object} response - The HTTP response
      */
-    const getReleases = (request, response) => {
+    function getReleases (request, response) {
         response.render('releases', { releases: feedReleases });
-    };
+    }
 
     /**
      * The function that responds to GET /releases/:version
@@ -76,7 +81,7 @@ const create = (releases, options) => {
      * @param {Object} request - The HTTP request
      * @param {Object} response - The HTTP response
      */
-    const getRelease = (request, response) => {
+    function getRelease (request, response) {
         const fs = require('fs'),
             version = request.params.version,
             config = {
@@ -86,7 +91,7 @@ const create = (releases, options) => {
                 releaseVersion: version.replace('v', '')
             };
 
-        if (fs.existsSync(releaseFilenameFor(version))) {
+        if (versionInWhitelist(version) && fs.existsSync(releaseFilenameFor(version))) {
             response.render('_header', config, (headerError, header) => {
                 if (headerError) { throw headerError; }
                 response.render(releaseViewFor(version), config, (bodyError, body) => {
@@ -101,9 +106,9 @@ const create = (releases, options) => {
         else {
             response.status(404).send('No such release');
         }
-    };
+    }
 
     return { getFeed, getReleases, getRelease };
-};
+}
 
 module.exports = { create };

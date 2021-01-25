@@ -5,88 +5,92 @@
  * @module
  */
 
-const createServer = () => {
-    const createSMTPServer = server => {
-        const SMTPServer = require('smtp-server').SMTPServer;
-        return new SMTPServer({
+function create (options, logger, responseFn) {
+    const Q = require('q'),
+        deferred = Q.defer(),
+        connections = {},
+        SMTPServer = require('smtp-server').SMTPServer,
+        server = new SMTPServer({
+            maxAllowedUnauthenticatedCommands: 1000,
             disableReverseLookup: true,
             authOptional: true,
-            onConnect (session, callback) {
-                server.emit('connection', session);
-                return callback();
-            },
-            onData (stream, session, callback) {
-                server.emit('request', session, { session: session, source: stream, callback: callback });
-            }
-        });
-    };
+            onConnect (socket, callback) {
+                const helpers = require('../../util/helpers'),
+                    name = helpers.socketName(socket);
 
-    const combinators = require('../../util/combinators'),
-        inherit = require('../../util/inherit'),
-        result = inherit.from(require('events').EventEmitter, {
-            errorHandler: require('../../util/combinators').noop,
-            formatRequestShort: request => {
-                const util = require('util');
-                return util.format('Envelope from: %s to: %s', request.from, JSON.stringify(request.to));
-            },
-            formatRequest: combinators.identity,
-            formatResponse: combinators.noop,
-            respond: (smtpRequest, originalRequest) => { originalRequest.callback(); },
-            metadata: combinators.constant({}),
-            addStub: combinators.noop,
-            state: {},
-            stubs: () => []
-        }),
-        server = createSMTPServer(result);
+                logger.debug('%s ESTABLISHED', name);
 
-    result.close = callback => {
-        server.close(combinators.noop);
-        callback();
-    };
+                if (socket.on) {
+                    connections[name] = socket;
 
-    result.listen = port => {
-        const Q = require('q'),
-            deferred = Q.defer();
+                    socket.on('error', error => {
+                        logger.error('%s transmission error X=> %s', name, JSON.stringify(error));
+                    });
 
-        server.listen(port, () => {
-            deferred.resolve(server.server.address().port);
-        });
-        return deferred.promise;
-    };
+                    socket.on('end', () => {
+                        logger.debug('%s LAST-ACK', name);
+                    });
 
-    return result;
-};
-
-/**
- * Initializes the smtp protocol
- * @param {object} logger - the base logger
- * @param {boolean} recordRequests - The --mock command line parameter
- * @param {boolean} debug - The --debug command line parameter
- * @returns {Object}
- */
-const initialize = (logger, recordRequests, debug) => {
-    const implementation = {
-            protocolName: 'smtp',
-            createServer: createServer,
-            Request: require('./smtpRequest')
-        },
-        noOpValidator = {
-            create: () => ({
-                validate: () => {
-                    const Q = require('q');
-                    return Q({
-                        isValid: true,
-                        errors: []
+                    socket.on('close', () => {
+                        logger.debug('%s CLOSED', name);
+                        delete connections[name];
                     });
                 }
-            })
-        };
+                return callback();
+            },
+            onData (stream, socket, callback) {
+                const request = { session: socket, source: stream, callback: callback };
+                const domain = require('domain').create(),
+                    helpers = require('../../util/helpers'),
+                    clientName = helpers.socketName(socket),
+                    errorHandler = error => {
+                        const exceptions = require('../../util/errors');
+                        logger.error('%s X=> %s', clientName, JSON.stringify(exceptions.details(error)));
+                    };
 
-    return {
-        name: implementation.protocolName,
-        create: require('../abstractServer').implement(implementation, recordRequests, debug, logger).create,
-        Validator: noOpValidator
-    };
+                domain.on('error', errorHandler);
+                domain.run(() => {
+                    require('./smtpRequest').createFrom(request).then(simpleRequest => {
+                        logger.info(`${clientName} => Envelope from: ${JSON.stringify(simpleRequest.from)} to: ${JSON.stringify(simpleRequest.to)}`);
+                        logger.debug('%s => %s', clientName, JSON.stringify(simpleRequest));
+                        return responseFn(simpleRequest);
+                    }).then(response => {
+                        if (response) {
+                            logger.debug('%s <= %s', clientName, JSON.stringify(response));
+                        }
+                        return Q(true);
+                    }).done(() => Q(request.callback()), errorHandler);
+                });
+            }
+        });
+
+    server.listen(options.port || 0, options.host, () => {
+        deferred.resolve({
+            port: server.server.address().port,
+            metadata: {},
+            close: callback => {
+                server.close(callback);
+                Object.keys(connections).forEach(socket => {
+                    connections[socket].destroy();
+                });
+            },
+            proxy: {},
+            encoding: 'utf8'
+        });
+    });
+
+    return deferred.promise;
+}
+
+module.exports = {
+    testRequest: {
+        from: 'test@test.com',
+        to: ['test@test.com'],
+        subject: 'Test',
+        text: 'Test'
+    },
+    testProxyResponse: {},
+    create: create,
+    validate: undefined
 };
 
-module.exports = { initialize };

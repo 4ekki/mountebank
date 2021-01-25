@@ -11,9 +11,11 @@ const assert = require('assert'),
 ['http', 'https'].forEach(protocol => {
     const client = BaseHttpClient.create(protocol);
 
-    describe(`${protocol} imposter`, () => {
-        describe('POST /imposters with stubs', () => {
-            promiseIt('should return stubbed response', () => {
+    describe(`${protocol} imposter`, function () {
+        this.timeout(timeout);
+
+        describe('POST /imposters with stubs', function () {
+            promiseIt('should return stubbed response', function () {
                 const stub = {
                         responses: [{
                             is: {
@@ -37,30 +39,33 @@ const assert = require('assert'),
                     assert.strictEqual(response.body, 'test body');
                     assert.strictEqual(response.headers['x-test'], 'test header');
                 }).finally(() => api.del('/imposters'));
-            }).timeout(timeout);
+            });
 
-            promiseIt('should allow a sequence of stubs as a circular buffer', () => {
+            promiseIt('should allow a sequence of stubs as a circular buffer', function () {
                 const stub = { responses: [{ is: { statusCode: 400 } }, { is: { statusCode: 405 } }] },
                     request = { protocol, port, stubs: [stub] };
 
-                return api.post('/imposters', request).then(() => client.get('/test', port)).then(response => {
-                    assert.strictEqual(response.statusCode, 400);
+                return api.post('/imposters', request)
+                    .then(() => client.get('/test', port))
+                    .then(response => {
+                        assert.strictEqual(response.statusCode, 400);
+                        return client.get('/test', port);
+                    })
+                    .then(response => {
+                        assert.strictEqual(response.statusCode, 405);
+                        return client.get('/test', port);
+                    })
+                    .then(response => {
+                        assert.strictEqual(response.statusCode, 400);
+                        return client.get('/test', port);
+                    })
+                    .then(response => {
+                        assert.strictEqual(response.statusCode, 405);
+                    })
+                    .finally(() => api.del('/imposters'));
+            });
 
-                    return client.get('/test', port);
-                }).then(response => {
-                    assert.strictEqual(response.statusCode, 405);
-
-                    return client.get('/test', port);
-                }).then(response => {
-                    assert.strictEqual(response.statusCode, 400);
-
-                    return client.get('/test', port);
-                }).then(response => {
-                    assert.strictEqual(response.statusCode, 405);
-                }).finally(() => api.del('/imposters'));
-            }).timeout(timeout);
-
-            promiseIt('should only return stubbed response if matches complex predicate', () => {
+            promiseIt('should only return stubbed response if matches complex predicate', function () {
                 const spec = {
                         path: '/test?key=value&next=true',
                         port,
@@ -126,9 +131,9 @@ const assert = require('assert'),
                 }).then(response => {
                     assert.strictEqual(response.statusCode, 400, 'should have matched');
                 }).finally(() => api.del('/imposters'));
-            }).timeout(timeout);
+            });
 
-            promiseIt('should correctly handle deepEquals object predicates', () => {
+            promiseIt('should correctly handle deepEquals object predicates', function () {
                 const stubWithEmptyObjectPredicate = {
                         responses: [{ is: { body: 'first stub' } }],
                         predicates: [{ deepEquals: { query: {} } }]
@@ -162,10 +167,10 @@ const assert = require('assert'),
                 }).then(response => {
                     assert.strictEqual(response.body, '');
                 }).finally(() => api.del('/imposters'));
-            }).timeout(timeout);
+            });
 
-            promiseIt('should support sending binary response', () => {
-                const buffer = new Buffer([0, 1, 2, 3]),
+            promiseIt('should support sending binary response', function () {
+                const buffer = Buffer.from([0, 1, 2, 3]),
                     stub = { responses: [{ is: { body: buffer.toString('base64'), _mode: 'binary' } }] },
                     request = { protocol, port, stubs: [stub] };
 
@@ -175,9 +180,9 @@ const assert = require('assert'),
                 }).then(response => {
                     assert.deepEqual(response.body.toJSON().data, [0, 1, 2, 3]);
                 }).finally(() => api.del('/imposters'));
-            }).timeout(timeout);
+            });
 
-            promiseIt('should support JSON bodies', () => {
+            promiseIt('should support JSON bodies', function () {
                 const stub = {
                         responses: [
                             {
@@ -218,9 +223,9 @@ const assert = require('assert'),
                 }).then(response => {
                     assert.deepEqual(JSON.parse(response.body), { key: 'second request' });
                 }).finally(() => api.del('/imposters'));
-            }).timeout(timeout);
+            });
 
-            promiseIt('should support treating the body as a JSON object for predicate matching', () => {
+            promiseIt('should support treating the body as a JSON object for predicate matching', function () {
                 const stub = {
                         responses: [{ is: { body: 'SUCCESS' } }],
                         predicates: [
@@ -238,9 +243,9 @@ const assert = require('assert'),
                 }).then(response => {
                     assert.strictEqual(response.body, 'SUCCESS');
                 }).finally(() => api.del('/imposters'));
-            }).timeout(timeout);
+            });
 
-            promiseIt('should support changing default response for stub', () => {
+            promiseIt('should support changing default response for stub', function () {
                 const stub = {
                         responses: [
                             { is: { body: 'Wrong address' } },
@@ -266,9 +271,9 @@ const assert = require('assert'),
                     assert.strictEqual(404, response.statusCode);
                     assert.strictEqual('Not found', response.body);
                 }).finally(() => api.del('/imposters'));
-            }).timeout(timeout);
+            });
 
-            promiseIt('should support keepalive connections', () => {
+            promiseIt('should support keepalive connections', function () {
                 const stub = { responses: [{ is: { body: 'Success' } }] },
                     defaultResponse = { headers: { CONNECTION: 'Keep-Alive' } }, // tests case-sensitivity of header match
                     request = { protocol, port, defaultResponse: defaultResponse, stubs: [stub] };
@@ -280,9 +285,9 @@ const assert = require('assert'),
                     assert.strictEqual(response.body, 'Success');
                     assert.strictEqual(response.headers.connection, 'Keep-Alive');
                 }).finally(() => api.del('/imposters'));
-            }).timeout(timeout);
+            });
 
-            promiseIt('should support sending multiple values back for same header', () => {
+            promiseIt('should support sending multiple values back for same header', function () {
                 const stub = { responses: [{ is: { headers: { 'Set-Cookie': ['first', 'second'] } } }] },
                     request = { protocol, port, stubs: [stub] };
 
@@ -292,12 +297,12 @@ const assert = require('assert'),
                 }).then(response => {
                     assert.deepEqual(response.headers['set-cookie'], ['first', 'second']);
                 }).finally(() => api.del('/imposters'));
-            }).timeout(timeout);
+            });
 
-            promiseIt('should support sending JSON bodies with _links field for canned responses', () => {
+            promiseIt('should support sending JSON bodies with _links field for canned responses', function () {
                 const stub = { responses: [{ is: {
                         headers: { 'Content-Type': 'application/json' },
-                        body: { _links: { self: '/products/123' } }
+                        body: { _links: { self: { href: '/products/123' } } }
                     } }] },
                     request = { protocol, port, stubs: [stub] };
 
@@ -305,11 +310,11 @@ const assert = require('assert'),
                     assert.strictEqual(response.statusCode, 201, response.body);
                     return client.get('/', port);
                 }).then(response => {
-                    assert.deepEqual(response.body, { _links: { self: '/products/123' } });
+                    assert.deepEqual(response.body, { _links: { self: { href: '/products/123' } } });
                 }).finally(() => api.del('/imposters'));
-            }).timeout(timeout);
+            });
 
-            promiseIt('should correctly set content-length for binary data', () => {
+            promiseIt('should correctly set content-length for binary data', function () {
                 // https://github.com/bbyars/mountebank/issues/204
                 const stub = {
                         responses: [{
@@ -328,9 +333,29 @@ const assert = require('assert'),
                 }).then(response => {
                     assert.deepEqual(response.headers['content-length'], 639);
                 }).finally(() => api.del('/imposters'));
-            }).timeout(timeout);
+            });
 
-            promiseIt('should handle JSON null values', () => {
+            promiseIt('should correctly set content-length for binary data when using multiline base64', function () {
+                const stub = {
+                        responses: [{
+                            is: {
+                                headers: { 'Content-Length': 274 },
+                                body: 'iVBORw0KGgoAAAANSUhEUgAAAGQAAAAyBAMAAABYG2ONAAAAFVBMVEUAAAD///9/f39fX1+fn58f\nHx8/Pz8rYiDqAAAACXBIWXMAAA7EAAAOxAGVKw4bAAAAo0lEQVRIie2Qyw7CIBBFb2DwO5q+1o0L\n1w0NrrHRPQnV//8EAUl0ga1ujIs5CZAz4YYZAIZhmN/QQOkjzq3LLuv6xUrQHmTJGphcEGE9rUQ3\nY4bqqrDjAlgQoJK9Z8YBmFy8Gp8DeSeTfRSBCf2I6/JN5ORiRfrNiIfqh9S9SVPL27A1C0G4EX2e\nJR7J1iI7rbG0Vf4x0UwPW0Uh3i0bwzD/yR11mBj1DIKiVwAAAABJRU5ErkJggg==\n',
+                                _mode: 'binary'
+                            }
+                        }]
+                    },
+                    request = { protocol, port, stubs: [stub] };
+
+                return api.post('/imposters', request).then(response => {
+                    assert.strictEqual(response.statusCode, 201, response.body);
+                    return client.get('/', port);
+                }).then(response => {
+                    assert.deepEqual(response.headers['content-length'], 274);
+                }).finally(() => api.del('/imposters'));
+            });
+
+            promiseIt('should handle JSON null values', function () {
                 // https://github.com/bbyars/mountebank/issues/209
                 const stub = { responses: [{ is: { body: { name: 'test', type: null } } }] },
                     request = { protocol, port, stubs: [stub] };
@@ -341,9 +366,9 @@ const assert = require('assert'),
                 }).then(response => {
                     assert.deepEqual(JSON.parse(response.body), { name: 'test', type: null });
                 }).finally(() => api.del('/imposters'));
-            }).timeout(timeout);
+            });
 
-            promiseIt('should handle null values in deepEquals predicate (issue #229)', () => {
+            promiseIt('should handle null values in deepEquals predicate (issue #229)', function () {
                 const stub = {
                         predicates: [{ deepEquals: { body: { field: null } } }],
                         responses: [{ is: { body: 'SUCCESS' } }]
@@ -356,9 +381,9 @@ const assert = require('assert'),
                 }).then(response => {
                     assert.strictEqual(response.body, 'SUCCESS');
                 }).finally(() => api.del('/imposters'));
-            }).timeout(timeout);
+            });
 
-            promiseIt('should support array predicates with xpath', () => {
+            promiseIt('should support array predicates with xpath', function () {
                 const stub = {
                         responses: [{ is: { body: 'SUCCESS' } }],
                         predicates: [{
@@ -375,9 +400,9 @@ const assert = require('assert'),
                 }).then(response => {
                     assert.strictEqual(response.body, 'SUCCESS');
                 }).finally(() => api.del('/imposters'));
-            }).timeout(timeout);
+            });
 
-            promiseIt('should support matches predicate on uppercase JSON key (issue #228)', () => {
+            promiseIt('should support matches predicate on uppercase JSON key (issue #228)', function () {
                 const stub = {
                         predicates: [{ matches: { body: { Key: '^Value' } } }],
                         responses: [{ is: { body: 'SUCCESS' } }]
@@ -390,9 +415,9 @@ const assert = require('assert'),
                 }).then(response => {
                     assert.strictEqual(response.body, 'SUCCESS');
                 }).finally(() => api.del('/imposters'));
-            }).timeout(timeout);
+            });
 
-            promiseIt('should support predicate matching with null value (issue #262)', () => {
+            promiseIt('should support predicate matching with null value (issue #262)', function () {
                 const stub = {
                         predicates: [{ equals: { body: { version: null } } }],
                         responses: [{ is: { body: 'SUCCESS' } }]
@@ -405,9 +430,9 @@ const assert = require('assert'),
                 }).then(response => {
                     assert.strictEqual(response.body, 'SUCCESS');
                 }).finally(() => api.del('/imposters'));
-            }).timeout(timeout);
+            });
 
-            promiseIt('should support predicate form matching', () => {
+            promiseIt('should support predicate form matching', function () {
                 const spec = {
                     path: '/',
                     port,
@@ -430,7 +455,221 @@ const assert = require('assert'),
                 }).then(response => {
                     assert.strictEqual(response.body, 'SUCCESS');
                 }).finally(() => api.del('/imposters'));
-            }).timeout(timeout);
+            });
+
+            promiseIt('should support overwriting the stubs without restarting the imposter', function () {
+                const stub = { responses: [{ is: { body: 'ORIGINAL' } }] },
+                    request = { protocol, port, stubs: [stub] };
+
+                return api.post('/imposters', request)
+                    .then(response => {
+                        assert.strictEqual(response.statusCode, 201, JSON.stringify(response.body));
+                        return api.put(`/imposters/${port}/stubs`, {
+                            stubs: [
+                                { responses: [{ is: { body: 'FIRST' } }] },
+                                { responses: [{ is: { body: 'ORIGINAL' } }] },
+                                { responses: [{ is: { body: 'THIRD' } }] }
+                            ]
+                        });
+                    }).then(response => {
+                        assert.strictEqual(response.statusCode, 200);
+                        assert.deepEqual(response.body.stubs, [
+                            {
+                                responses: [{ is: { body: 'FIRST' } }],
+                                _links: { self: { href: `${api.url}/imposters/${port}/stubs/0` } }
+                            },
+                            {
+                                responses: [{ is: { body: 'ORIGINAL' } }],
+                                _links: { self: { href: `${api.url}/imposters/${port}/stubs/1` } }
+                            },
+                            {
+                                responses: [{ is: { body: 'THIRD' } }],
+                                _links: { self: { href: `${api.url}/imposters/${port}/stubs/2` } }
+                            }
+                        ]);
+                        return client.get('/', port);
+                    })
+                    .then(response => {
+                        assert.strictEqual(response.body, 'FIRST');
+                    })
+                    .finally(() => api.del('/imposters'));
+            });
+
+            promiseIt('should support overwriting a single stub without restarting the imposter', function () {
+                const request = {
+                        protocol,
+                        port,
+                        stubs: [
+                            { responses: [{ is: { body: 'first' } }], predicates: [{ equals: { path: '/first' } }] },
+                            { responses: [{ is: { body: 'SECOND' } }] },
+                            { responses: [{ is: { body: 'third' } }] }
+                        ]
+                    },
+                    changedStub = { responses: [{ is: { body: 'CHANGED' } }] };
+
+                return api.post('/imposters', request)
+                    .then(response => {
+                        assert.strictEqual(201, response.statusCode, JSON.stringify(response.body));
+                        return api.put(`/imposters/${port}/stubs/1`, changedStub);
+                    })
+                    .then(response => {
+                        assert.strictEqual(response.statusCode, 200, JSON.stringify(response.body));
+                        assert.deepEqual(response.body.stubs, [
+                            {
+                                responses: [{ is: { body: 'first' } }],
+                                predicates: [{ equals: { path: '/first' } }],
+                                _links: { self: { href: `${api.url}/imposters/${port}/stubs/0` } }
+                            },
+                            {
+                                responses: [{ is: { body: 'CHANGED' } }],
+                                _links: { self: { href: `${api.url}/imposters/${port}/stubs/1` } }
+                            },
+                            {
+                                responses: [{ is: { body: 'third' } }],
+                                _links: { self: { href: `${api.url}/imposters/${port}/stubs/2` } }
+                            }
+                        ]);
+                        return client.get('/', port);
+                    })
+                    .then(response => {
+                        assert.strictEqual(response.body, 'CHANGED');
+                    })
+                    .finally(() => api.del('/imposters'));
+            });
+
+            promiseIt('should support deleting single stub without restarting the imposter', function () {
+                const request = {
+                    protocol,
+                    port,
+                    stubs: [
+                        { responses: [{ is: { body: 'first' } }], predicates: [{ equals: { path: '/first' } }] },
+                        { responses: [{ is: { body: 'SECOND' } }] },
+                        { responses: [{ is: { body: 'third' } }] }
+                    ]
+                };
+
+                return api.post('/imposters', request)
+                    .then(response => {
+                        assert.strictEqual(201, response.statusCode, JSON.stringify(response.body));
+                        return api.del(`/imposters/${port}/stubs/1`);
+                    })
+                    .then(response => {
+                        assert.strictEqual(response.statusCode, 200);
+                        assert.deepEqual(response.body.stubs, [
+                            {
+                                responses: [{ is: { body: 'first' } }], predicates: [{ equals: { path: '/first' } }],
+                                _links: { self: { href: `${api.url}/imposters/${port}/stubs/0` } }
+                            },
+                            {
+                                responses: [{ is: { body: 'third' } }],
+                                _links: { self: { href: `${api.url}/imposters/${port}/stubs/1` } }
+                            }
+                        ]);
+                        return client.get('/', port);
+                    })
+                    .then(response => {
+                        assert.strictEqual(response.body, 'third');
+                    })
+                    .finally(() => api.del('/imposters'));
+            });
+
+            promiseIt('should support adding single stub without restarting the imposter', function () {
+                const request = {
+                        protocol,
+                        port,
+                        stubs: [
+                            { responses: [{ is: { body: 'first' } }], predicates: [{ equals: { path: '/first' } }] },
+                            { responses: [{ is: { body: 'third' } }] }
+                        ]
+                    },
+                    newStub = { responses: [{ is: { body: 'SECOND' } }] };
+
+                return api.post('/imposters', request)
+                    .then(response => {
+                        assert.strictEqual(201, response.statusCode, JSON.stringify(response.body));
+                        return api.post(`/imposters/${port}/stubs`, { index: 1, stub: newStub });
+                    })
+                    .then(response => {
+                        assert.strictEqual(response.statusCode, 200);
+                        assert.deepEqual(response.body.stubs, [
+                            {
+                                responses: [{ is: { body: 'first' } }], predicates: [{ equals: { path: '/first' } }],
+                                _links: { self: { href: `${api.url}/imposters/${port}/stubs/0` } }
+                            },
+                            {
+                                responses: [{ is: { body: 'SECOND' } }],
+                                _links: { self: { href: `${api.url}/imposters/${port}/stubs/1` } }
+                            },
+                            {
+                                responses: [{ is: { body: 'third' } }],
+                                _links: { self: { href: `${api.url}/imposters/${port}/stubs/2` } }
+                            }
+                        ]);
+                        return client.get('/', port);
+                    })
+                    .then(response => {
+                        assert.strictEqual(response.body, 'SECOND');
+                    })
+                    .finally(() => api.del('/imposters'));
+            });
+
+            promiseIt('should support adding single stub at end without index ', function () {
+                const request = {
+                        protocol,
+                        port,
+                        stubs: [
+                            { responses: [{ is: { body: 'first' } }], predicates: [{ equals: { path: '/first' } }] },
+                            { responses: [{ is: { body: 'third' } }] }
+                        ]
+                    },
+                    newStub = { responses: [{ is: { body: 'LAST' } }] };
+
+                return api.post('/imposters', request)
+                    .then(response => {
+                        assert.strictEqual(201, response.statusCode, JSON.stringify(response.body));
+                        return api.post(`/imposters/${port}/stubs`, { stub: newStub });
+                    })
+                    .then(response => {
+                        assert.strictEqual(response.statusCode, 200);
+                        assert.deepEqual(response.body.stubs, [
+                            {
+                                responses: [{ is: { body: 'first' } }], predicates: [{ equals: { path: '/first' } }],
+                                _links: { self: { href: `${api.url}/imposters/${port}/stubs/0` } }
+                            },
+                            {
+                                responses: [{ is: { body: 'third' } }],
+                                _links: { self: { href: `${api.url}/imposters/${port}/stubs/1` } }
+                            },
+                            {
+                                responses: [{ is: { body: 'LAST' } }],
+                                _links: { self: { href: `${api.url}/imposters/${port}/stubs/2` } }
+                            }
+                        ]);
+                        return client.get('/', port);
+                    })
+                    .then(response => {
+                        assert.strictEqual(response.body, 'third');
+                    })
+                    .finally(() => api.del('/imposters'));
+            });
+
+            promiseIt('should support matching cirillic characters (issue #477)', function () {
+                const request = {
+                    port,
+                    protocol,
+                    stubs: [{
+                        predicates: [{ deepEquals: { body: { тест: '2' } } }],
+                        responses: [{ is: { body: 'Matched' } }]
+                    }]
+                };
+
+                return api.post('/imposters', request).then(response => {
+                    assert.strictEqual(201, response.statusCode, JSON.stringify(response.body, null, 4));
+                    return client.post('/', '{ "тест": "2" }', port);
+                }).then(response => {
+                    assert.strictEqual(response.body, 'Matched');
+                }).finally(() => api.del('/imposters'));
+            });
         });
     });
 });

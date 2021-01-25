@@ -2,14 +2,13 @@
 
 const fs = require('fs-extra'),
     os = require('os'),
-    rimraf = require('rimraf'),
     version = require('./version').getVersion(),
     run = require('./run').run;
 
 module.exports = function (grunt) {
 
     function failTask (task) {
-        return function (exitCode) {
+        return exitCode => {
             grunt.warn(task + ' failed', exitCode);
         };
     }
@@ -19,19 +18,19 @@ module.exports = function (grunt) {
             newPackage = JSON.parse(JSON.stringify(require('../package.json'))),
             failed = failTask('dist');
 
-        rimraf.sync('dist');
+        fs.removeSync('dist');
         fs.mkdirSync('dist');
         fs.mkdirSync('dist/mountebank');
-        ['bin', 'src', 'package.json', 'package-lock.json', 'releases.json', 'README.md', 'LICENSE'].forEach(function (source) {
+        ['bin', 'src', 'package.json', 'package-lock.json', 'releases.json', 'README.md', 'LICENSE'].forEach(source => {
             fs.copySync(source, 'dist/mountebank/' + source);
         });
-        rimraf.sync('dist/mountebank/src/public/images/sources');
+        fs.removeSync('dist/mountebank/src/public/images/sources');
 
 
         delete newPackage.devDependencies;
         fs.writeFileSync('dist/mountebank/package.json', JSON.stringify(newPackage, null, 2));
 
-        run('npm', ['install', '--production'], { cwd: 'dist/mountebank' }).done(function () {
+        run('npm', ['install', '--production'], { cwd: 'dist/mountebank' }).done(() => {
             // Switch tests to use the mb from the dist directory to test what actually gets published
             process.env.MB_EXECUTABLE = 'dist/mountebank/bin/mb';
             done();

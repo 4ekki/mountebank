@@ -10,73 +10,74 @@ const assert = require('assert'),
     timeout = isWindows ? 10000 : parseInt(process.env.MB_SLOW_TEST_TIMEOUT || 3000),
     airplaneMode = process.env.MB_AIRPLANE_MODE === 'true';
 
-describe('tcp proxy', () => {
+describe('tcp proxy', function () {
+    this.timeout(timeout);
+
     const noOp = () => {},
         logger = { debug: noOp, info: noOp, warn: noOp, error: noOp };
 
-    describe('#to', () => {
-        promiseIt('should send same request information to proxied socket', () => {
+    describe('#to', function () {
+        promiseIt('should send same request information to proxied socket', function () {
             const stub = { responses: [{ is: { data: 'howdy!' } }] },
                 request = { protocol: 'tcp', port, stubs: [stub] },
                 proxy = TcpProxy.create(logger, 'utf8');
 
-            return api.post('/imposters', request).then(() => proxy.to(`tcp://localhost:${port}`, { data: 'hello, world!' })).then(response => {
-                assert.deepEqual(response.data.toString(), 'howdy!');
-            }).finally(() => api.del('/imposters'));
-        }).timeout(timeout);
+            return api.post('/imposters', request)
+                .then(() => proxy.to(`tcp://localhost:${port}`, { data: 'hello, world!' }))
+                .then(response => {
+                    assert.deepEqual(response.data.toString(), 'howdy!');
+                })
+                .finally(() => api.del('/imposters'));
+        });
 
-        promiseIt('should support old proxy syntax for backwards compatibility', () => {
-            const stub = { responses: [{ is: { data: 'howdy!' } }] },
-                request = { protocol: 'tcp', port, stubs: [stub] },
-                proxy = TcpProxy.create(logger, 'utf8');
-
-            return api.post('/imposters', request).then(() => proxy.to({ host: 'localhost', port }, { data: 'hello, world!' })).then(response => {
-                assert.deepEqual(response.data.toString(), 'howdy!');
-            }).finally(() => api.del('/imposters'));
-        }).timeout(timeout);
-
-        promiseIt('should proxy binary data', () => {
-            const buffer = new Buffer([0, 1, 2, 3]),
+        promiseIt('should proxy binary data', function () {
+            const buffer = Buffer.from([0, 1, 2, 3]),
                 stub = { responses: [{ is: { data: buffer.toString('base64') } }] },
                 request = { protocol: 'tcp', port, stubs: [stub], mode: 'binary' },
                 proxy = TcpProxy.create(logger, 'base64');
 
-            return api.post('/imposters', request).then(() => proxy.to(`tcp://localhost:${port}`, { data: buffer })).then(response => {
-                assert.deepEqual(new Buffer(response.data, 'base64').toJSON().data, [0, 1, 2, 3]);
-            }).finally(() => api.del('/imposters'));
-        }).timeout(timeout);
+            return api.post('/imposters', request)
+                .then(() => proxy.to(`tcp://localhost:${port}`, { data: buffer }))
+                .then(response => {
+                    assert.deepEqual(Buffer.from(response.data, 'base64').toJSON().data, [0, 1, 2, 3]);
+                })
+                .finally(() => api.del('/imposters'));
+        });
 
-        promiseIt('should wait for remote socket to end before returning', () => {
-            const server = net.createServer(client => {
-                client.on('data', () => {
-                    // force multiple data packets
-                    client.write((new Array(10 * 1024 * 1024)).join('x'));
+        promiseIt('should obey endOfRequestResolver', function () {
+            // We'll simulate a protocol that has a 4 byte message length at byte 0 indicating how many bytes follow
+            const getRequest = length => {
+                    const buffer = Buffer.alloc(length + 4);
+                    buffer.writeUInt32LE(length, 0);
+
+                    for (let i = 0; i < length; i += 1) {
+                        buffer.writeInt8(0, i + 4);
+                    }
+                    return buffer;
+                },
+                largeRequest = getRequest(100000),
+                resolver = requestBuffer => {
+                    const messageLength = requestBuffer.readUInt32LE(0);
+                    return requestBuffer.length >= messageLength + 4;
+                },
+                originServer = net.createServer(client => {
+                    client.on('data', () => {
+                        // force multiple data packets
+                        client.write(largeRequest, () => { originServer.close(); });
+                    });
                 });
+
+            originServer.listen(port);
+
+            const proxy = TcpProxy.create(logger, 'base64', resolver),
+                request = { data: 'test' };
+            return proxy.to(`tcp://localhost:${port}`, request).then(response => {
+                assert.strictEqual(response.data, largeRequest.toString('base64'), `Response length: ${response.data.length}`);
             });
-            server.listen(port);
-
-            const proxy = TcpProxy.create(logger, 'utf8');
-
-            return proxy.to(`tcp://localhost:${port}`, { data: 'hello, world!' }).then(response => {
-                assert.strictEqual(response.data.length, 10 * 1024 * 1024 - 1);
-            }).finally(() => {
-                server.close();
-            });
-        }).timeout(timeout);
-
-        promiseIt('should capture response time to origin server', () => {
-            const stub = { responses: [{ is: { data: 'howdy!' } }] },
-                request = { protocol: 'tcp', port, stubs: [stub] },
-                proxy = TcpProxy.create(logger, 'utf8');
-
-            return api.post('/imposters', request).then(() => proxy.to(`tcp://localhost:${port}`, { data: 'hello, world!' })).then(response => {
-                assert.deepEqual(response.data.toString(), 'howdy!');
-                assert.ok(response._proxyResponseTime >= 0); // eslint-disable-line no-underscore-dangle
-            }).finally(() => api.del('/imposters'));
-        }).timeout(timeout);
+        });
 
         if (!airplaneMode) {
-            promiseIt('should gracefully deal with DNS errors', () => {
+            promiseIt('should gracefully deal with DNS errors', function () {
                 const proxy = TcpProxy.create(logger, 'utf8');
 
                 return proxy.to('tcp://no.such.domain:80', { data: 'hello, world!' }).then(() => {
@@ -87,10 +88,10 @@ describe('tcp proxy', () => {
                         message: 'Cannot resolve "tcp://no.such.domain:80"'
                     });
                 });
-            }).timeout(timeout);
+            });
         }
 
-        promiseIt('should gracefully deal with non listening ports', () => {
+        promiseIt('should gracefully deal with non listening ports', function () {
             const proxy = TcpProxy.create(logger, 'utf8');
 
             return proxy.to('tcp://localhost:18000', { data: 'hello, world!' }).then(() => {
@@ -101,9 +102,9 @@ describe('tcp proxy', () => {
                     message: 'Unable to connect to "tcp://localhost:18000"'
                 });
             });
-        }).timeout(timeout);
+        });
 
-        promiseIt('should reject non-tcp protocols', () => {
+        promiseIt('should reject non-tcp protocols', function () {
             const proxy = TcpProxy.create(logger, 'utf8');
 
             return proxy.to('http://localhost:80', { data: 'hello, world!' }).then(() => {
@@ -115,6 +116,6 @@ describe('tcp proxy', () => {
                     source: 'http://localhost:80'
                 });
             });
-        }).timeout(timeout);
+        });
     });
 });

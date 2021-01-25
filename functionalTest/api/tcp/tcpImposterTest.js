@@ -7,88 +7,81 @@ const assert = require('assert'),
     port = api.port + 1,
     timeout = parseInt(process.env.MB_SLOW_TEST_TIMEOUT || 2000);
 
-describe('tcp imposter', () => {
-    describe('POST /imposters/:id', () => {
-        promiseIt('should auto-assign port if port not provided', () => {
+describe('tcp imposter', function () {
+    this.timeout(timeout);
+
+    describe('POST /imposters/:id', function () {
+        promiseIt('should auto-assign port if port not provided', function () {
             const request = { protocol: 'tcp' };
 
             return api.post('/imposters', request).then(response => {
                 assert.strictEqual(response.statusCode, 201);
                 assert.ok(response.body.port > 0);
             }).finally(() => api.del('/imposters'));
-        }).timeout(timeout);
+        });
     });
 
-    describe('GET /imposters/:id', () => {
-        promiseIt('should provide access to all requests', () => {
+    describe('GET /imposters/:id', function () {
+        promiseIt('should provide access to all requests', function () {
             const request = { protocol: 'tcp', port };
 
-            return api.post('/imposters', request).then(() => tcp.fireAndForget('first', port)).then(() => tcp.fireAndForget('second', port)).then(() => api.get(`/imposters/${port}`)).then(response => {
-                const requests = response.body.requests.map(recordedRequest => recordedRequest.data);
-                assert.deepEqual(requests, ['first', 'second']);
-            }).finally(() => api.del('/imposters'));
-        }).timeout(timeout);
+            return api.post('/imposters', request)
+                .then(() => tcp.fireAndForget('first', port))
+                .then(() => tcp.fireAndForget('second', port))
+                .then(() => api.get(`/imposters/${port}`))
+                .then(response => {
+                    const requests = response.body.requests.map(recordedRequest => recordedRequest.data);
+                    assert.deepEqual(requests, ['first', 'second']);
+                })
+                .finally(() => api.del('/imposters'));
+        });
 
-        promiseIt('should return list of stubs in order', () => {
+        promiseIt('should return list of stubs in order', function () {
             const first = { responses: [{ is: { data: '1' } }] },
                 second = { responses: [{ is: { data: '2' } }] },
                 request = { protocol: 'tcp', port, stubs: [first, second] };
 
-            return api.post('/imposters', request).then(() => api.get(`/imposters/${port}`)).then(response => {
-                assert.strictEqual(response.statusCode, 200);
-                assert.deepEqual(response.body.stubs, [
-                    { responses: [{ is: { data: '1' } }] },
-                    { responses: [{ is: { data: '2' } }] }
-                ]);
-            }).finally(() => api.del('/imposters'));
-        }).timeout(timeout);
-
-        promiseIt('should reflect default mode', () => {
-            const request = { protocol: 'tcp', port, name: 'imposter' };
-
-            return api.post('/imposters', request).then(() => api.get(`/imposters/${port}`)).then(response => {
-                assert.strictEqual(response.statusCode, 200);
-                assert.deepEqual(response.body, {
-                    protocol: 'tcp',
-                    port,
-                    numberOfRequests: 0,
-                    mode: 'text',
-                    name: request.name,
-                    requests: [],
-                    stubs: [],
-                    _links: {
-                        self: { href: `${api.url}/imposters/${port}` }
-                    }
-                });
-            }).finally(() => api.del('/imposters'));
-        }).timeout(timeout);
-
-        promiseIt('should record matches against stubs', () => {
-            const stub = { responses: [{ is: { data: '1' } }, { is: { data: '2' } }] },
-                request = { protocol: 'tcp', port, stubs: [stub] };
-
-            return api.post('/imposters', request).then(() => tcp.send('first', port)).then(() => tcp.send('second', port)).then(() => api.get(`/imposters/${port}`)).then(response => {
-                const stubs = JSON.stringify(response.body.stubs),
-                    withTimeRemoved = stubs.replace(/"timestamp":"[^"]+"/g, '"timestamp":"NOW"'),
-                    withClientPortRemoved = withTimeRemoved.replace(/"requestFrom":"[a-f:.\d]+"/g, '"requestFrom":"HERE"'),
-                    actualWithoutEphemeralData = JSON.parse(withClientPortRemoved);
-
-                assert.deepEqual(actualWithoutEphemeralData, [{
-                    responses: [{ is: { data: '1' } }, { is: { data: '2' } }],
-                    matches: [
+            return api.post('/imposters', request)
+                .then(() => api.get(`/imposters/${port}`))
+                .then(response => {
+                    assert.strictEqual(response.statusCode, 200);
+                    assert.deepEqual(response.body.stubs, [
                         {
-                            timestamp: 'NOW',
-                            request: { requestFrom: 'HERE', data: 'first' },
-                            response: { data: '1' }
+                            responses: [{ is: { data: '1' } }],
+                            _links: { self: { href: `${api.url}/imposters/${port}/stubs/0` } }
                         },
                         {
-                            timestamp: 'NOW',
-                            request: { requestFrom: 'HERE', data: 'second' },
-                            response: { data: '2' }
+                            responses: [{ is: { data: '2' } }],
+                            _links: { self: { href: `${api.url}/imposters/${port}/stubs/1` } }
                         }
-                    ]
-                }]);
-            }).finally(() => api.del('/imposters'));
-        }).timeout(timeout);
+                    ]);
+                })
+                .finally(() => api.del('/imposters'));
+        });
+
+        promiseIt('should reflect default mode', function () {
+            const request = { protocol: 'tcp', port, name: 'imposter' };
+
+            return api.post('/imposters', request)
+                .then(() => api.get(`/imposters/${port}`))
+                .then(response => {
+                    assert.strictEqual(response.statusCode, 200);
+                    assert.deepEqual(response.body, {
+                        protocol: 'tcp',
+                        port,
+                        recordRequests: false,
+                        numberOfRequests: 0,
+                        mode: 'text',
+                        name: request.name,
+                        requests: [],
+                        stubs: [],
+                        _links: {
+                            self: { href: `${api.url}/imposters/${port}` },
+                            stubs: { href: `${api.url}/imposters/${port}/stubs` }
+                        }
+                    });
+                })
+                .finally(() => api.del('/imposters'));
+        });
     });
 });

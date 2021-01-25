@@ -6,21 +6,7 @@
  * @module
  */
 
-/**
- * Returns the request that will be used during dry run validation
- * @returns {Object}
- */
-const createTestRequest = () => ({
-    requestFrom: '',
-    method: 'GET',
-    path: '/',
-    query: {},
-    headers: {},
-    form: {},
-    body: ''
-});
-
-const transform = request => {
+function transform (request) {
     const helpers = require('../../util/helpers'),
         url = require('url'),
         queryString = require('query-string'),
@@ -35,17 +21,19 @@ const transform = request => {
         path: parts.pathname,
         query: parts.query,
         headers,
-        body: request.body
+        body: request.body,
+        ip: request.socket.remoteAddress
     };
 
-    if (request.body && isUrlEncodedForm(headers['Content-Type'])) {
+    const contentType = headersHelper.getHeader('Content-Type', headers);
+    if (request.body && isUrlEncodedForm(contentType)) {
         transformed.form = queryString.parse(request.body);
     }
 
     return transformed;
-};
+}
 
-const isUrlEncodedForm = contentType => {
+function isUrlEncodedForm (contentType) {
     if (!contentType) {
         return false;
     }
@@ -56,22 +44,21 @@ const isUrlEncodedForm = contentType => {
         contentType.trim();
 
     return type === 'application/x-www-form-urlencoded';
-};
+}
 
 /**
  * Creates the API-friendly http/s request
- * @param {Object} container - An object containing the raw http/s request
+ * @param {Object} request - The raw http/s request
  * @returns {Object} - Promise resolving to the simplified request
  */
-const createFrom = container => {
+function createFrom (request) {
     const Q = require('q'),
-        deferred = Q.defer(),
-        request = container.request;
+        deferred = Q.defer();
     request.body = '';
     request.setEncoding('utf8');
     request.on('data', chunk => { request.body += chunk; });
     request.on('end', () => { deferred.resolve(transform(request)); });
     return deferred.promise;
-};
+}
 
-module.exports = { createTestRequest, createFrom };
+module.exports = { createFrom };
